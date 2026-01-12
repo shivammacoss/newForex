@@ -579,7 +579,7 @@ router.post('/cancel', async (req, res) => {
   }
 })
 
-// POST /api/trade/check-sltp - Check and trigger SL/TP for challenge trades
+// POST /api/trade/check-sltp - Check and trigger SL/TP for all trades
 router.post('/check-sltp', async (req, res) => {
   try {
     const { prices } = req.body
@@ -592,20 +592,61 @@ router.post('/check-sltp', async (req, res) => {
     }
 
     // Check SL/TP for all open challenge trades
-    const closedTrades = await propTradingEngine.checkSlTpForAllTrades(prices)
+    const closedChallengeTrades = await propTradingEngine.checkSlTpForAllTrades(prices)
+    
+    // Check SL/TP for all regular trades
+    const closedRegularTrades = await tradeEngine.checkSlTpForAllTrades(prices)
+
+    const allClosedTrades = [...closedChallengeTrades, ...closedRegularTrades]
 
     res.json({
       success: true,
-      closedCount: closedTrades.length,
-      closedTrades: closedTrades.map(ct => ({
+      closedCount: allClosedTrades.length,
+      closedTrades: allClosedTrades.map(ct => ({
         tradeId: ct.trade.tradeId,
         symbol: ct.trade.symbol,
-        reason: ct.reason,
+        reason: ct.trigger || ct.reason,
         pnl: ct.pnl
       }))
     })
   } catch (error) {
     console.error('Error checking SL/TP:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    })
+  }
+})
+
+// POST /api/trade/check-pending - Check and execute pending orders when price is reached
+router.post('/check-pending', async (req, res) => {
+  try {
+    const { prices } = req.body
+
+    if (!prices || typeof prices !== 'object') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Prices object is required' 
+      })
+    }
+
+    // Check pending orders for execution
+    const executedTrades = await tradeEngine.checkPendingOrders(prices)
+
+    res.json({
+      success: true,
+      executedCount: executedTrades.length,
+      executedTrades: executedTrades.map(et => ({
+        tradeId: et.trade.tradeId,
+        symbol: et.trade.symbol,
+        side: et.trade.side,
+        orderType: et.trade.orderType,
+        executionPrice: et.executionPrice,
+        executedAt: et.executedAt
+      }))
+    })
+  } catch (error) {
+    console.error('Error checking pending orders:', error)
     res.status(500).json({ 
       success: false, 
       message: error.message 

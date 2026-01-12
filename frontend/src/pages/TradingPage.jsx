@@ -310,9 +310,25 @@ const TradingPage = () => {
           return tab
         }))
 
-        // Check SL/TP for challenge trades (auto-close when hit)
-        if (accountType === 'challenge' && Object.keys(allPrices).length > 0) {
+        // Check pending orders and SL/TP for all trades
+        if (Object.keys(allPrices).length > 0) {
           try {
+            // Check pending orders for execution
+            const pendingRes = await fetch(`${API_URL}/trade/check-pending`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prices: allPrices })
+            })
+            const pendingData = await pendingRes.json()
+            if (pendingData.success && pendingData.executedCount > 0) {
+              fetchOpenTrades()
+              fetchPendingOrders()
+              pendingData.executedTrades.forEach(et => {
+                setTradeSuccess(`${et.orderType} executed: ${et.symbol} ${et.side} @ ${et.executionPrice?.toFixed(5)}`)
+              })
+            }
+            
+            // Check SL/TP for all trades (auto-close when hit)
             const slTpRes = await fetch(`${API_URL}/trade/check-sltp`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

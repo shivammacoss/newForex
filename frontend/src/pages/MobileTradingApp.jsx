@@ -5,7 +5,7 @@ import {
   Copy, Users, HelpCircle, FileText, UserCircle, LogOut, Wallet,
   X, ChevronRight, Search, Star, ArrowUp, ArrowDown, Clock,
   Plus, Minus, Settings, RefreshCw, ChevronDown, Bell, User,
-  ArrowDownCircle, ArrowUpCircle, Check
+  ArrowDownCircle, ArrowUpCircle, Check, Pencil, Trash2
 } from 'lucide-react'
 import metaApiService from '../services/metaApi'
 
@@ -41,6 +41,17 @@ const MobileTradingApp = () => {
   const [expandedTrade, setExpandedTrade] = useState(null)
   const chartContainerRef = useRef(null)
   const wsRef = useRef(null)
+  
+  // Modify trade modal states
+  const [showModifyModal, setShowModifyModal] = useState(false)
+  const [selectedTradeForModify, setSelectedTradeForModify] = useState(null)
+  const [modifySL, setModifySL] = useState('')
+  const [modifyTP, setModifyTP] = useState('')
+  const [isModifying, setIsModifying] = useState(false)
+  
+  // iOS-style notification states
+  const [notifications, setNotifications] = useState([])
+  const notificationIdRef = useRef(0)
 
   const categories = ['All', 'Starred', 'Forex', 'Metals', 'Crypto']
 
@@ -154,9 +165,55 @@ const MobileTradingApp = () => {
           }
           return inst
         }))
+        
+        // Check pending orders and SL/TP in background
+        checkPendingOrdersAndSlTp(allPrices)
       }
     } catch (e) {
       console.error('Live prices error:', e)
+    }
+  }
+  
+  // Check pending orders and SL/TP execution
+  const checkPendingOrdersAndSlTp = async (prices) => {
+    if (!selectedAccount) return
+    
+    try {
+      // Check pending orders for execution
+      const pendingRes = await fetch(`${API_URL}/trade/check-pending`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prices })
+      })
+      const pendingData = await pendingRes.json()
+      
+      if (pendingData.success && pendingData.executedCount > 0) {
+        pendingData.executedTrades.forEach(trade => {
+          showNotification(`${trade.orderType} order executed: ${trade.symbol} ${trade.side} @ ${trade.executionPrice?.toFixed(5)}`, 'success')
+        })
+        fetchOpenTrades()
+        fetchPendingOrders()
+      }
+      
+      // Check SL/TP for open trades
+      const sltpRes = await fetch(`${API_URL}/trade/check-sltp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prices })
+      })
+      const sltpData = await sltpRes.json()
+      
+      if (sltpData.success && sltpData.closedCount > 0) {
+        sltpData.closedTrades.forEach(trade => {
+          const pnlText = trade.pnl >= 0 ? `+$${trade.pnl.toFixed(2)}` : `-$${Math.abs(trade.pnl).toFixed(2)}`
+          showNotification(`${trade.reason} hit: ${trade.symbol} closed at ${pnlText}`, trade.pnl >= 0 ? 'success' : 'error')
+        })
+        fetchOpenTrades()
+        fetchTradeHistory()
+        fetchAccountSummary()
+      }
+    } catch (e) {
+      // Silently fail - this runs in background
     }
   }
 
@@ -248,12 +305,12 @@ const MobileTradingApp = () => {
         setShowOrderPanel(false)
         fetchOpenTrades()
         fetchAccountSummary()
-        alert('Order executed successfully!')
+        showNotification('Order executed successfully!', 'success')
       } else {
-        alert(data.message || 'Order failed')
+        showNotification(data.message || 'Order failed', 'error')
       }
     } catch (e) {
-      alert('Error executing order')
+      showNotification('Error executing order', 'error')
     }
     setIsExecuting(false)
   }
@@ -261,7 +318,7 @@ const MobileTradingApp = () => {
   const closeTrade = async (tradeId) => {
     const trade = openTrades.find(t => t._id === tradeId)
     if (!trade) {
-      alert('Trade not found')
+      showNotification('Trade not found', 'error')
       return
     }
 
@@ -278,16 +335,84 @@ const MobileTradingApp = () => {
       })
       const data = await res.json()
       if (data.success) {
-        alert(`Trade closed! P/L: $${data.realizedPnl?.toFixed(2) || data.pnl?.toFixed(2) || '0.00'}`)
+        const pnl = data.realizedPnl?.toFixed(2) || data.pnl?.toFixed(2) || '0.00'
+        showNotification(`Trade closed! P/L: $${pnl}`, parseFloat(pnl) >= 0 ? 'success' : 'error')
         fetchOpenTrades()
         fetchTradeHistory()
         fetchAccountSummary()
       } else {
-        alert(data.message || 'Failed to close trade')
+        showNotification(data.message || 'Failed to close trade', 'error')
       }
     } catch (e) {
       console.error('Close trade error:', e)
-      alert('Error closing trade')
+      showNotification('Error closing trade', 'error')
+    }
+  }
+
+  // iOS-style notification function
+  const showNotification = (message, type = 'success', duration = 3000) => {
+    const id = ++notificationIdRef.current
+    const notification = { id, message, type }
+    setNotifications(prev => [...prev, notification])
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id))
+    }, duration)
+  }
+
+  // Open modify SL/TP modal
+  const openModifyModal = (trade) => {
+    setSelectedTradeForModify(trade)
+    setModifySL((trade.sl || trade.stopLoss)?.toString() || '')
+    setModifyTP((trade.tp || trade.takeProfit)?.toString() || '')
+    setShowModifyModal(true)
+  }
+
+  // Modify trade SL/TP
+  const handleModifyTrade = async () => {
+    if (!selectedTradeForModify || isModifying) return
+    setIsModifying(true)
+
+    try {
+      const res = await fetch(`${API_URL}/trade/modify`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tradeId: selectedTradeForModify._id,
+          sl: modifySL ? parseFloat(modifySL) : null,
+          tp: modifyTP ? parseFloat(modifyTP) : null
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        showNotification('Trade modified successfully', 'success')
+        fetchOpenTrades()
+        setShowModifyModal(false)
+      } else {
+        showNotification(data.message || 'Failed to modify trade', 'error')
+      }
+    } catch (e) {
+      showNotification('Error modifying trade', 'error')
+    }
+    setIsModifying(false)
+  }
+
+  // Cancel pending order
+  const cancelPendingOrder = async (orderId) => {
+    try {
+      const res = await fetch(`${API_URL}/trade/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradeId: orderId })
+      })
+      const data = await res.json()
+      if (data.success) {
+        showNotification('Pending order cancelled', 'success')
+        fetchPendingOrders()
+      } else {
+        showNotification(data.message || 'Failed to cancel order', 'error')
+      }
+    } catch (e) {
+      showNotification('Error cancelling order', 'error')
     }
   }
 
@@ -705,11 +830,20 @@ const MobileTradingApp = () => {
                           <p className="text-gray-500 text-xs">{trade.quantity} lots @ {trade.openPrice?.toFixed(5)}</p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className={`font-semibold text-sm ${pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                          {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
-                        </p>
-                        <p className="text-gray-500 text-xs">{currentPrice?.toFixed(5) || '-'}</p>
+                      <div className="flex items-center gap-3">
+                        {/* Pen icon for quick SL/TP edit */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openModifyModal(trade) }}
+                          className="p-2 bg-blue-500/20 rounded-lg active:bg-blue-500/30"
+                        >
+                          <Pencil size={14} className="text-blue-400" />
+                        </button>
+                        <div className="text-right">
+                          <p className={`font-semibold text-sm ${pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                            {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                          </p>
+                          <p className="text-gray-500 text-xs">{currentPrice?.toFixed(5) || '-'}</p>
+                        </div>
                       </div>
                     </div>
                     
@@ -741,25 +875,30 @@ const MobileTradingApp = () => {
                             <p className="text-gray-500">Commission</p>
                             <p className="text-white">${(trade.commission || 0).toFixed(2)}</p>
                           </div>
-                          {trade.sl && (
-                            <div>
-                              <p className="text-gray-500">Stop Loss</p>
-                              <p className="text-red-500">{trade.sl?.toFixed(5)}</p>
-                            </div>
-                          )}
-                          {trade.tp && (
-                            <div>
-                              <p className="text-gray-500">Take Profit</p>
-                              <p className="text-green-500">{trade.tp?.toFixed(5)}</p>
-                            </div>
-                          )}
+                          <div>
+                            <p className="text-gray-500">Stop Loss</p>
+                            <p className={trade.sl || trade.stopLoss ? 'text-red-500' : 'text-gray-600'}>{(trade.sl || trade.stopLoss)?.toFixed(5) || 'Not set'}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500">Take Profit</p>
+                            <p className={trade.tp || trade.takeProfit ? 'text-green-500' : 'text-gray-600'}>{(trade.tp || trade.takeProfit)?.toFixed(5) || 'Not set'}</p>
+                          </div>
                         </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); closeTrade(trade._id) }}
-                          className="w-full py-2.5 bg-red-500 text-white rounded-lg text-sm font-medium"
-                        >
-                          Close Trade
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openModifyModal(trade) }}
+                            className="flex-1 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                          >
+                            <Pencil size={14} />
+                            Modify SL/TP
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); closeTrade(trade._id) }}
+                            className="flex-1 py-2.5 bg-red-500 text-white rounded-lg text-sm font-medium"
+                          >
+                            Close Trade
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -777,17 +916,57 @@ const MobileTradingApp = () => {
             </div>
           ) : (
             <div className="divide-y divide-gray-800">
-              {pendingOrders.map(order => (
-                <div key={order._id} className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-white font-medium">{order.symbol}</p>
-                      <p className="text-gray-500 text-xs">{order.orderType} • {order.quantity} lots</p>
+              {pendingOrders.map(order => {
+                const prices = getPrice(order.symbol)
+                const currentPrice = order.side === 'BUY' ? prices.ask : prices.bid
+                return (
+                <div key={order._id} className="p-4 bg-dark-900">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-medium">{order.symbol}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                        order.side === 'BUY' ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'
+                      }`}>
+                        {order.orderType}
+                      </span>
                     </div>
-                    <p className="text-white">{order.pendingPrice?.toFixed(5)}</p>
+                    <span className="text-yellow-500 text-xs font-medium">PENDING</span>
                   </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs mb-3">
+                    <div>
+                      <p className="text-gray-500">Entry Price</p>
+                      <p className="text-white">{order.pendingPrice?.toFixed(5)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Current</p>
+                      <p className="text-white">{currentPrice?.toFixed(5) || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Volume</p>
+                      <p className="text-white">{order.quantity} lots</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Stop Loss</p>
+                      <p className={order.sl || order.stopLoss ? 'text-red-500' : 'text-gray-600'}>{(order.sl || order.stopLoss)?.toFixed(5) || 'Not set'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Take Profit</p>
+                      <p className={order.tp || order.takeProfit ? 'text-green-500' : 'text-gray-600'}>{(order.tp || order.takeProfit)?.toFixed(5) || 'Not set'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Created</p>
+                      <p className="text-white">{new Date(order.createdAt).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => cancelPendingOrder(order._id)}
+                    className="w-full py-2 bg-red-500/20 text-red-500 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={14} />
+                    Cancel Order
+                  </button>
                 </div>
-              ))}
+              )})}
             </div>
           )
         )}
@@ -1180,6 +1359,99 @@ const MobileTradingApp = () => {
           </div>
         </div>
       )}
+
+      {/* iOS-Style Modify SL/TP Modal */}
+      {showModifyModal && selectedTradeForModify && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end justify-center" onClick={() => setShowModifyModal(false)}>
+          <div className="w-full bg-[#1c1c1e] rounded-t-3xl overflow-hidden animate-slide-up" onClick={(e) => e.stopPropagation()}>
+            {/* Handle bar */}
+            <div className="flex justify-center pt-3 pb-2">
+              <div className="w-10 h-1 bg-gray-600 rounded-full" />
+            </div>
+            
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-gray-700/50 text-center">
+              <h3 className="text-white font-semibold text-lg">Modify Trade</h3>
+              <p className="text-gray-400 text-sm mt-1">
+                {selectedTradeForModify.symbol} • {selectedTradeForModify.side} • {selectedTradeForModify.quantity} lots
+              </p>
+            </div>
+            
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="text-gray-400 text-sm mb-2 block">Stop Loss</label>
+                <input
+                  type="number"
+                  value={modifySL}
+                  onChange={(e) => setModifySL(e.target.value)}
+                  placeholder="Enter stop loss price"
+                  step="0.00001"
+                  className="w-full bg-[#2c2c2e] border border-gray-600 rounded-xl px-4 py-3 text-white text-base focus:outline-none focus:border-red-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-gray-400 text-sm mb-2 block">Take Profit</label>
+                <input
+                  type="number"
+                  value={modifyTP}
+                  onChange={(e) => setModifyTP(e.target.value)}
+                  placeholder="Enter take profit price"
+                  step="0.00001"
+                  className="w-full bg-[#2c2c2e] border border-gray-600 rounded-xl px-4 py-3 text-white text-base focus:outline-none focus:border-green-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="border-t border-gray-700/50">
+              <button
+                onClick={handleModifyTrade}
+                disabled={isModifying}
+                className="w-full py-4 text-blue-500 font-semibold text-lg border-b border-gray-700/50 disabled:opacity-50"
+              >
+                {isModifying ? 'Saving...' : 'Save Changes'}
+              </button>
+              <button
+                onClick={() => setShowModifyModal(false)}
+                className="w-full py-4 text-gray-400 font-medium text-lg"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* iOS-Style Notifications */}
+      <div className="fixed top-0 left-0 right-0 z-[100] pointer-events-none">
+        {notifications.map((notification, index) => (
+          <div
+            key={notification.id}
+            className="pointer-events-auto mx-4 mt-4 animate-slide-down"
+            style={{ marginTop: `${index * 60 + 16}px` }}
+          >
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-2xl backdrop-blur-xl shadow-lg ${
+              notification.type === 'success' 
+                ? 'bg-green-500/90' 
+                : notification.type === 'error' 
+                  ? 'bg-red-500/90' 
+                  : 'bg-gray-800/90'
+            }`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                notification.type === 'success' ? 'bg-white/20' : 'bg-white/20'
+              }`}>
+                {notification.type === 'success' ? (
+                  <Check size={18} className="text-white" />
+                ) : (
+                  <X size={18} className="text-white" />
+                )}
+              </div>
+              <p className="text-white font-medium text-sm flex-1">{notification.message}</p>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
