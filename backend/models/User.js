@@ -132,8 +132,10 @@ const userSchema = new mongoose.Schema({
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next()
   this.password = await bcrypt.hash(this.password, 12)
-  // Set passwordChangedAt when password is modified
-  this.passwordChangedAt = new Date()
+  // Only set passwordChangedAt when updating password (not on new user creation)
+  if (!this.isNew) {
+    this.passwordChangedAt = new Date()
+  }
   next()
 })
 

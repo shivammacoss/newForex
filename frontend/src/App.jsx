@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Dashboard from './pages/Dashboard'
@@ -38,12 +38,15 @@ import ForgotPassword from './pages/ForgotPassword'
 import AdminThemeSettings from './pages/AdminThemeSettings'
 import BrandedLogin from './pages/BrandedLogin'
 import BrandedSignup from './pages/BrandedSignup'
+import AdminEmailTemplates from './pages/AdminEmailTemplates'
 
 function App() {
   return (
     <Router>
       <Routes>
         <Route path="/" element={<Signup />} />
+        <Route path="/login" element={<Navigate to="/user/login" replace />} />
+        <Route path="/signup" element={<Navigate to="/user/signup" replace />} />
         <Route path="/user/signup" element={<Signup />} />
         <Route path="/user/login" element={<Login />} />
         <Route path="/user/forgot-password" element={<ForgotPassword />} />
@@ -79,6 +82,7 @@ function App() {
         <Route path="/admin/prop-trading" element={<AdminPropTrading />} />
         <Route path="/admin/earnings" element={<AdminEarnings />} />
         <Route path="/admin/theme" element={<AdminThemeSettings />} />
+        <Route path="/admin/email-templates" element={<AdminEmailTemplates />} />
         <Route path="/buy-challenge" element={<BuyChallengePage />} />
         <Route path="/challenge-dashboard" element={<ChallengeDashboardPage />} />
         <Route path="/:slug/login" element={<BrandedLogin />} />

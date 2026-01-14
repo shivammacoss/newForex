@@ -2,6 +2,9 @@ import express from 'express'
 import jwt from 'jsonwebtoken'
 import User from '../models/User.js'
 import Admin from '../models/Admin.js'
+import OTP from '../models/OTP.js'
+import EmailSettings from '../models/EmailSettings.js'
+import { sendTemplateEmail, generateOTP, isOTPEnabled, getOTPExpiry } from '../services/emailService.js'
 
 const router = express.Router()
 
@@ -10,15 +13,136 @@ const generateToken = (userId) => {
   return jwt.sign({ id: userId, iat: Math.floor(Date.now() / 1000) }, process.env.JWT_SECRET, { expiresIn: '7d' })
 }
 
+// POST /api/auth/send-otp - Send OTP for email verification
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { email, firstName } = req.body
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' })
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email })
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'User already exists with this email' })
+    }
+
+    // Check if OTP verification is enabled
+    const otpEnabled = await isOTPEnabled()
+    if (!otpEnabled) {
+      return res.json({ success: true, otpRequired: false, message: 'OTP verification is disabled' })
+    }
+
+    // Generate OTP
+    const otp = generateOTP()
+    const expiryMinutes = await getOTPExpiry()
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000)
+
+    // Delete any existing OTPs for this email
+    await OTP.deleteMany({ email })
+
+    // Save new OTP
+    await OTP.create({
+      email,
+      otp,
+      purpose: 'signup',
+      expiresAt
+    })
+
+    // Get platform name from settings
+    const settings = await EmailSettings.findOne()
+    const platformName = settings?.fromName || 'Trading Platform'
+    const supportEmail = settings?.fromEmail || 'support@example.com'
+
+    // Send OTP email
+    const emailResult = await sendTemplateEmail('email_verification', email, {
+      otp,
+      firstName: firstName || 'User',
+      email,
+      expiryMinutes: expiryMinutes.toString(),
+      platformName,
+      supportEmail,
+      year: new Date().getFullYear().toString()
+    })
+
+    if (emailResult.success) {
+      res.json({ success: true, otpRequired: true, message: 'OTP sent to your email' })
+    } else {
+      // If email fails but OTP is required, still allow signup (fallback)
+      console.error('Failed to send OTP email:', emailResult.message)
+      res.json({ success: true, otpRequired: false, message: 'Email service unavailable, proceeding without OTP' })
+    }
+  } catch (error) {
+    console.error('Send OTP error:', error)
+    res.status(500).json({ success: false, message: 'Error sending OTP', error: error.message })
+  }
+})
+
+// POST /api/auth/verify-otp - Verify OTP
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { email, otp } = req.body
+
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, message: 'Email and OTP are required' })
+    }
+
+    const otpRecord = await OTP.findOne({ email, otp, purpose: 'signup' })
+    
+    if (!otpRecord) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP' })
+    }
+
+    if (otpRecord.expiresAt < new Date()) {
+      await OTP.deleteOne({ _id: otpRecord._id })
+      return res.status(400).json({ success: false, message: 'OTP has expired' })
+    }
+
+    // Mark as verified
+    otpRecord.verified = true
+    await otpRecord.save()
+
+    res.json({ success: true, message: 'OTP verified successfully' })
+  } catch (error) {
+    console.error('Verify OTP error:', error)
+    res.status(500).json({ success: false, message: 'Error verifying OTP', error: error.message })
+  }
+})
+
+// GET /api/auth/otp-settings - Check if OTP is enabled
+router.get('/otp-settings', async (req, res) => {
+  try {
+    const otpEnabled = await isOTPEnabled()
+    res.json({ success: true, otpEnabled })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // POST /api/auth/signup
 router.post('/signup', async (req, res) => {
   try {
-    const { firstName, email, phone, countryCode, password, adminSlug, referralCode } = req.body
+    const { firstName, email, phone, countryCode, password, adminSlug, referralCode, otpVerified } = req.body
 
     // Check if user already exists
     const existingUser = await User.findOne({ email })
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' })
+    }
+
+    // Check if OTP verification is required
+    const otpEnabled = await isOTPEnabled()
+    if (otpEnabled) {
+      // Verify OTP was completed
+      const otpRecord = await OTP.findOne({ email, purpose: 'signup', verified: true })
+      if (!otpRecord && !otpVerified) {
+        return res.status(400).json({ message: 'Email verification required. Please verify your email first.' })
+      }
+      // Clean up OTP record
+      if (otpRecord) {
+        await OTP.deleteOne({ _id: otpRecord._id })
+      }
     }
 
     // Find admin by slug if provided
@@ -58,13 +182,25 @@ router.post('/signup', async (req, res) => {
       assignedAdmin,
       adminUrlSlug,
       parentIBId,
-      referredBy
+      referredBy,
+      emailVerified: otpEnabled ? true : false
     })
 
     // Update admin stats if assigned
     if (assignedAdmin) {
       await Admin.findByIdAndUpdate(assignedAdmin, { $inc: { 'stats.totalUsers': 1 } })
     }
+
+    // Send welcome email (get platform name from settings)
+    const emailSettings = await EmailSettings.findOne()
+    sendTemplateEmail('welcome', email, {
+      firstName: user.firstName,
+      email: user.email,
+      platformName: emailSettings?.fromName || 'Trading Platform',
+      loginUrl: 'http://localhost:5173/login',
+      supportEmail: emailSettings?.fromEmail || 'support@example.com',
+      year: new Date().getFullYear().toString()
+    })
 
     // Generate token
     const token = generateToken(user._id)

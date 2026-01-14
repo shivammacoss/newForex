@@ -24,6 +24,7 @@ import kycRoutes from './routes/kyc.js'
 import themeRoutes from './routes/theme.js'
 import adminManagementRoutes from './routes/adminManagement.js'
 import uploadRoutes from './routes/upload.js'
+import emailTemplatesRoutes from './routes/emailTemplates.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -230,6 +231,7 @@ app.use('/api/kyc', kycRoutes)
 app.use('/api/theme', themeRoutes)
 app.use('/api/admin-mgmt', adminManagementRoutes)
 app.use('/api/upload', uploadRoutes)
+app.use('/api/email-templates', emailTemplatesRoutes)
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')))

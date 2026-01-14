@@ -348,6 +348,10 @@ const AdminFundManagement = () => {
                   {selectedTxn.type} Request
                 </h3>
                 <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="col-span-2">
+                    <p className="text-gray-500">Transaction ID</p>
+                    <p className="text-white font-mono text-xs break-all">{selectedTxn.transactionId || selectedTxn._id}</p>
+                  </div>
                   <div>
                     <p className="text-gray-500">Amount</p>
                     <p className={`text-lg font-bold ${selectedTxn.type?.toLowerCase() === 'deposit' ? 'text-green-500' : 'text-red-500'}`}>
@@ -376,6 +380,22 @@ const AdminFundManagement = () => {
                   )}
                 </div>
               </div>
+
+              {/* Payment Screenshot */}
+              {selectedTxn.screenshot && (
+                <div className="border-t border-gray-700 pt-4">
+                  <h3 className="text-white font-semibold mb-3">Payment Screenshot</h3>
+                  <div className="bg-dark-700 rounded-lg p-2">
+                    <img 
+                      src={selectedTxn.screenshot.startsWith('http') ? selectedTxn.screenshot : `${API_URL.replace('/api', '')}${selectedTxn.screenshot}`} 
+                      alt="Payment proof" 
+                      className="w-full rounded-lg max-h-64 object-contain cursor-pointer"
+                      onClick={() => window.open(selectedTxn.screenshot.startsWith('http') ? selectedTxn.screenshot : `${API_URL.replace('/api', '')}${selectedTxn.screenshot}`, '_blank')}
+                    />
+                    <p className="text-gray-500 text-xs text-center mt-2">Click to view full image</p>
+                  </div>
+                </div>
+              )}
 
               {/* User Info */}
               <div className="border-t border-gray-700 pt-4">

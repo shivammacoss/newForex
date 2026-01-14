@@ -20,7 +20,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  Palette
+  Palette,
+  Mail
 } from 'lucide-react'
 
 const AdminLayout = ({ children, title, subtitle }) => {
@@ -43,6 +44,7 @@ const AdminLayout = ({ children, title, subtitle }) => {
     { name: 'Prop Firm Challenges', icon: Trophy, path: '/admin/prop-firm' },
     { name: 'Account Types', icon: CreditCard, path: '/admin/account-types' },
     { name: 'Theme Settings', icon: Palette, path: '/admin/theme' },
+    { name: 'Email Templates', icon: Mail, path: '/admin/email-templates' },
     { name: 'Admin Management', icon: Shield, path: '/admin/admin-management' },
     { name: 'KYC Verification', icon: FileCheck, path: '/admin/kyc' },
     { name: 'Support Tickets', icon: HeadphonesIcon, path: '/admin/support' },
